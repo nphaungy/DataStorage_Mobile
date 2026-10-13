@@ -1,5 +1,5 @@
 package com.example.studentmanagementapp.ui
-
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -36,11 +36,16 @@ import com.example.studentmanagementapp.viewmodel.StudentViewModel
 @Composable
 fun StudentScreen(
     modifier: Modifier = Modifier,
+    onLogout: () -> Unit = {},
     viewModel: StudentViewModel = viewModel(factory = StudentViewModel.Factory)
 ) {
-    // ยังไม่เคยกดโหลด = ยังไม่รู้สถานะออนไลน์
+    // ยังไม่เคยกดโหลด
     var hasLoaded by rememberSaveable { mutableStateOf(false) }
-
+    // เรียก Protected API
+    LaunchedEffect(Unit) {
+        hasLoaded = true
+        viewModel.loadStudents()
+    }
     LazyColumn(
         modifier = modifier
             .fillMaxSize()
@@ -48,11 +53,21 @@ fun StudentScreen(
         verticalArrangement = Arrangement.spacedBy(12.dp)
     ) {
         item {
-            Text(
-                text = "Student Management",
-                style = MaterialTheme.typography.headlineSmall,
-                modifier = Modifier.padding(top = 16.dp)
-            )
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(top = 16.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.SpaceBetween
+            ) {
+                Text(
+                    text = "Student Management",
+                    style = MaterialTheme.typography.headlineSmall
+                )
+                TextButton(onClick = onLogout) {
+                    Text("Logout")
+                }
+            }
         }
 
         // Exercise 4: สถานะออนไลน์ / ออฟไลน์

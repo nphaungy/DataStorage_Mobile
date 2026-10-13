@@ -15,6 +15,8 @@ import com.example.studentmanagementapp.data.repository.StudentRepository
 import com.example.studentmanagementapp.model.Student
 import kotlinx.coroutines.launch
 import kotlin.coroutines.cancellation.CancellationException
+import com.example.studentmanagementapp.data.remote.StudentApi
+import com.example.studentmanagementapp.data.remote.TokenStorage
 
 class StudentViewModel(
     private val repository: StudentRepository
@@ -114,7 +116,10 @@ class StudentViewModel(
             initializer {
                 val app = this[ViewModelProvider.AndroidViewModelFactory.APPLICATION_KEY] as Application
                 val db = AppDatabase.getDatabase(app)
-                StudentViewModel(StudentRepository(db.studentDao(), RetrofitClient.api))
+                val retrofit = RetrofitClient.getInstance(TokenStorage(app))
+                StudentViewModel(
+                    StudentRepository(db.studentDao(), retrofit.create(StudentApi::class.java))
+                )
             }
         }
     }
