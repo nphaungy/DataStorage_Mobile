@@ -6,7 +6,7 @@ import retrofit2.converter.gson.GsonConverterFactory
 object RetrofitClient {
 
     private const val BASE_URL =
-        "https://raw.githubusercontent.com/nphaungy/student-data/refs/heads/main/"
+        "http://10.0.2.2:8000/"
 
     val api: StudentApi by lazy {
         Retrofit.Builder()

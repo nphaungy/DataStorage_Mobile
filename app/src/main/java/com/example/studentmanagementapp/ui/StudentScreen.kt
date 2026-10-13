@@ -68,7 +68,7 @@ fun StudentScreen(
                 },
                 enabled = !viewModel.isLoading
             ) {
-                Text("Load Students")
+                Text("Refresh")
             }
         }
 
@@ -139,7 +139,7 @@ fun StudentScreen(
 private fun OnlineStatus(isOnline: Boolean) {
     val color = if (isOnline) Color(0xFF2E7D32) else MaterialTheme.colorScheme.error
     Text(
-        text = if (isOnline) "● ออนไลน์: ข้อมูลล่าสุดจาก GitHub"
+        text = if (isOnline) "● ออนไลน์: ข้อมูลล่าสุดจาก Server"
         else "● ออฟไลน์: แสดงข้อมูลที่บันทึกไว้ในเครื่อง",
         color = color,
         style = MaterialTheme.typography.bodyMedium

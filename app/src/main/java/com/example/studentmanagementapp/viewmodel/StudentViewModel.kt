@@ -65,28 +65,27 @@ class StudentViewModel(
     // Exercise 1
     fun addStudent(code: String, name: String, major: String) {
         viewModelScope.launch {
+            errorMessage = null
             try {
-                repository.addStudent(
-                    Student(studentCode = code.trim(), name = name.trim(), major = major.trim())
-                )
-                students = repository.getLocalStudents()
-            } catch (e: Exception) {
+                repository.addStudent(code.trim(), name.trim(), major.trim())
+                loadStudents()
+            }catch (e: Exception) {
                 if (e is CancellationException) throw e
-                errorMessage = "ไม่สามารถบันทึกข้อมูลได้"
+                errorMessage = "เพิ่มข้อมูลไม่สำเร็จ (ต้องเชื่อมต่อ Server)"
             }
         }
     }
 
-    // Exercise 2
     fun deleteStudent(student: Student) {
         viewModelScope.launch {
+            errorMessage = null
             try {
                 repository.deleteStudent(student)
-                students = repository.getLocalStudents()
                 if (selectedStudent?.id == student.id) selectedStudent = null
+                loadStudents()
             } catch (e: Exception) {
                 if (e is CancellationException) throw e
-                errorMessage = "ไม่สามารถลบข้อมูลได้"
+                errorMessage = "ลบข้อมูลไม่สำเร็จ (ต้องเชื่อมต่อ Server)"
             }
         }
     }
@@ -94,10 +93,11 @@ class StudentViewModel(
     // Bonus: Edit
     fun updateStudent(student: Student) {
         viewModelScope.launch {
+            errorMessage = null
             try {
                 repository.updateStudent(student)
-                students = repository.getLocalStudents()
                 selectedStudent = student
+                loadStudents()
             } catch (e: Exception) {
                 if (e is CancellationException) throw e
                 errorMessage = "ไม่สามารถแก้ไขข้อมูลได้"

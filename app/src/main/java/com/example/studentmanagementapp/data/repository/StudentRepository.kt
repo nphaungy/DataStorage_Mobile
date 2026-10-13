@@ -2,6 +2,8 @@ package com.example.studentmanagementapp.data.repository
 
 import com.example.studentmanagementapp.data.local.StudentDao
 import com.example.studentmanagementapp.data.remote.StudentApi
+import com.example.studentmanagementapp.data.remote.StudentCreateRequest
+import com.example.studentmanagementapp.data.remote.toEntity
 import com.example.studentmanagementapp.model.Student
 import kotlin.coroutines.cancellation.CancellationException
 
@@ -17,8 +19,9 @@ class StudentRepository(
 
     suspend fun getStudents(): StudentLoadResult {
         return try {
-            val remoteStudents = api.getStudents()
-            dao.insertAll(remoteStudents)
+            val remote = api.getStudents().map {it.toEntity()}
+            dao.deleteAll()
+            dao.insertAll(remote)
             StudentLoadResult(dao.getAllStudents(), fromNetwork = true)
         } catch (e: Exception) {
             if (e is CancellationException) throw e
@@ -28,9 +31,18 @@ class StudentRepository(
 
     suspend fun getLocalStudents(): List<Student> = dao.getAllStudents()
 
-    suspend fun addStudent(student: Student) = dao.insertStudent(student)
+    suspend fun addStudent(code: String, name: String, major: String) {
+        api.createStudent(StudentCreateRequest(code, name, major))
+    }
 
-    suspend fun updateStudent(student: Student) = dao.updateStudent(student)
+    suspend fun updateStudent(student: Student) {
+        api.updateStudent(
+            student.id,
+            StudentCreateRequest(student.studentCode, student.name, student.major)
+        )
+    }
 
-    suspend fun deleteStudent(student: Student) = dao.deleteStudent(student)
+    suspend fun deleteStudent(student: Student) {
+        api.deleteStudent(student.id)
+    }
 }
