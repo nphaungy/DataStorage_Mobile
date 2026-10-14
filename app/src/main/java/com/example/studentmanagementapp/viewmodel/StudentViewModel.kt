@@ -4,112 +4,181 @@ import android.app.Application
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.snapshotFlow
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
 import androidx.lifecycle.viewmodel.initializer
 import androidx.lifecycle.viewmodel.viewModelFactory
 import com.example.studentmanagementapp.data.local.AppDatabase
+import com.example.studentmanagementapp.data.local.StudentEntity
 import com.example.studentmanagementapp.data.remote.RetrofitClient
-import com.example.studentmanagementapp.data.repository.StudentRepository
-import com.example.studentmanagementapp.model.Student
-import kotlinx.coroutines.launch
-import kotlin.coroutines.cancellation.CancellationException
 import com.example.studentmanagementapp.data.remote.StudentApi
 import com.example.studentmanagementapp.data.remote.TokenStorage
+import com.example.studentmanagementapp.data.repository.StudentRepository
+import com.example.studentmanagementapp.data.repository.SyncOutcome
+import kotlinx.coroutines.flow.SharingStarted
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.stateIn
+import kotlinx.coroutines.launch
+import kotlin.coroutines.cancellation.CancellationException
+
+data class StatusMessage(val text: String, val isError: Boolean)
+
+private data class ActionResult(
+    val outcome: SyncOutcome,
+    val successText: String? = null,
+    val successIsError: Boolean = false
+)
 
 class StudentViewModel(
     private val repository: StudentRepository
 ) : ViewModel() {
 
-    var students by mutableStateOf(listOf<Student>())
-        private set
-    var isLoading by mutableStateOf(false)
-        private set
-    var errorMessage by mutableStateOf<String?>(null)
-        private set
-    var isOnline by mutableStateOf(false)          // Exercise 4
-        private set
-    var searchQuery by mutableStateOf("")          // Exercise 3
-        private set
-    var selectedStudent by mutableStateOf<Student?>(null)  // Bonus
+    val students: StateFlow<List<StudentEntity>> =
+        repository.observeStudents()
+            .stateIn(
+                scope = viewModelScope,
+                started = SharingStarted.WhileSubscribed(5000),
+                initialValue = emptyList()
+            )
+
+    var searchQuery by mutableStateOf("")
         private set
 
-    // Exercise 3: คำนวณจาก state สองตัว ทุกครั้งที่ UI อ่าน
-    val filteredStudents: List<Student>
-        get() {
-            val q = searchQuery.trim()
-            if (q.isEmpty()) return students
-            return students.filter {
+    val filteredStudents: StateFlow<List<StudentEntity>> =
+        combine(students, snapshotFlow { searchQuery }) { list, query ->
+            val q = query.trim()
+            if (q.isEmpty()) list
+            else list.filter {
                 it.studentCode.contains(q, ignoreCase = true) ||
-                    it.name.contains(q, ignoreCase = true) ||
-                    it.major.contains(q, ignoreCase = true)
+                        it.name.contains(q, ignoreCase = true) ||
+                        it.major.contains(q, ignoreCase = true)
             }
-        }
+        }.stateIn(
+            scope = viewModelScope,
+            started = SharingStarted.WhileSubscribed(5000),
+            initialValue = emptyList()
+        )
 
-    fun loadStudents() {
-        viewModelScope.launch {
-            isLoading = true
-            errorMessage = null
-            try {
-                val result = repository.getStudents()
-                students = result.students
-                isOnline = result.fromNetwork
-            } catch (e: Exception) {
-                if (e is CancellationException) throw e
-                errorMessage = "ไม่สามารถโหลดข้อมูลได้"
-            } finally {
-                isLoading = false
-            }
-        }
-    }
+    var isSyncing by mutableStateOf(false)
+        private set
+    var isOnline by mutableStateOf<Boolean?>(null)   // null = ยังไม่เคยติดต่อ Server
+        private set
+    var message by mutableStateOf<StatusMessage?>(null)
+        private set
+    var selectedStudent by mutableStateOf<StudentEntity?>(null)
+        private set
 
-    // Exercise 1
+    // บันทึกลง Room ทันที ไม่รอ Server
     fun addStudent(code: String, name: String, major: String) {
         viewModelScope.launch {
-            errorMessage = null
             try {
-                repository.addStudent(code.trim(), name.trim(), major.trim())
-                loadStudents()
-            }catch (e: Exception) {
+                repository.addStudent(
+                    StudentEntity(
+                        studentCode = code.trim(),
+                        name = name.trim(),
+                        major = major.trim()
+                    )
+                )
+            } catch (e: Exception) {
                 if (e is CancellationException) throw e
-                errorMessage = "เพิ่มข้อมูลไม่สำเร็จ (ต้องเชื่อมต่อ Server)"
+                message = StatusMessage("บันทึกลงเครื่องไม่สำเร็จ", isError = true)
             }
         }
     }
 
-    fun deleteStudent(student: Student) {
-        viewModelScope.launch {
-            errorMessage = null
-            try {
-                repository.deleteStudent(student)
-                if (selectedStudent?.id == student.id) selectedStudent = null
-                loadStudents()
-            } catch (e: Exception) {
-                if (e is CancellationException) throw e
-                errorMessage = "ลบข้อมูลไม่สำเร็จ (ต้องเชื่อมต่อ Server)"
+    // ส่ง PENDING แล้วดึงข้อมูลล่าสุด
+    fun syncStudents() {
+        runServerAction {
+            val push = repository.syncPending()
+            if (push.outcome != SyncOutcome.OK) {
+                return@runServerAction ActionResult(push.outcome)
             }
+            val pull = repository.refreshFromServer()
+            ActionResult(
+                outcome = pull,
+                successText = "Sync สำเร็จ: ส่งขึ้น Server ${push.synced} รายการ" +
+                        if (push.failed > 0) " (FAILED ${push.failed} รายการ)" else "",
+                successIsError = push.failed > 0
+            )
         }
     }
 
-    // Bonus: Edit
-    fun updateStudent(student: Student) {
-        viewModelScope.launch {
-            errorMessage = null
-            try {
-                repository.updateStudent(student)
-                selectedStudent = student
-                loadStudents()
-            } catch (e: Exception) {
-                if (e is CancellationException) throw e
-                errorMessage = "ไม่สามารถแก้ไขข้อมูลได้"
+    fun loadStudents() {
+        runServerAction { ActionResult(repository.refreshFromServer()) }
+    }
+
+    fun deleteStudent(student: StudentEntity) {
+        runServerAction {
+            val outcome = repository.deleteStudent(student)
+            if (outcome == SyncOutcome.OK && selectedStudent?.localId == student.localId) {
+                selectedStudent = null
             }
+            ActionResult(outcome)
+        }
+    }
+
+    fun updateStudent(student: StudentEntity) {
+        runServerAction {
+            val outcome = repository.updateStudent(student)
+            if (outcome == SyncOutcome.OK) selectedStudent = null
+            ActionResult(outcome)
         }
     }
 
     fun onSearchQueryChange(query: String) { searchQuery = query }
 
-    fun selectStudent(student: Student?) { selectedStudent = student }
+    fun selectStudent(student: StudentEntity?) { selectedStudent = student }
+
+    // ทำทีละงาน ไม่ให้ซ้อนกัน
+    private fun runServerAction(action: suspend () -> ActionResult) {
+        if (isSyncing) {
+            message = StatusMessage("กำลังติดต่อ Server อยู่ กรุณารอสักครู่แล้วลองใหม่", isError = true)
+            return
+        }
+        viewModelScope.launch {
+            isSyncing = true
+            message = null
+            try {
+                report(action())
+            } catch (e: Exception) {
+                if (e is CancellationException) throw e
+                message = StatusMessage("เกิดข้อผิดพลาด: ${e.message}", isError = true)
+            } finally {
+                isSyncing = false
+            }
+        }
+    }
+
+    private fun report(result: ActionResult) {
+        when (result.outcome) {
+            SyncOutcome.OK -> {
+                isOnline = true
+                message = result.successText?.let { StatusMessage(it, result.successIsError) }
+            }
+            SyncOutcome.OFFLINE -> {
+                isOnline = false
+                message = StatusMessage(
+                    "เชื่อมต่อ Server ไม่ได้: งานที่ต้องใช้ Server ยังไม่ถูกดำเนินการ " +
+                            "(รายการที่เพิ่มไว้ในเครื่องยังเป็น PENDING)",
+                    isError = true
+                )
+            }
+            SyncOutcome.UNAUTHORIZED -> {
+                isOnline = true
+                message = StatusMessage(
+                    "Token หมดอายุหรือไม่ถูกต้อง กรุณากด Logout แล้ว Login ใหม่",
+                    isError = true
+                )
+            }
+            SyncOutcome.SERVER_ERROR -> {
+                isOnline = true
+                message = StatusMessage("Server ตอบกลับผิดพลาด ลองใหม่อีกครั้ง", isError = true)
+            }
+        }
+    }
 
     companion object {
         val Factory: ViewModelProvider.Factory = viewModelFactory {

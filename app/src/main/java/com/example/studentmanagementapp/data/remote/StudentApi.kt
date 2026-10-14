@@ -8,15 +8,16 @@ import retrofit2.http.PUT
 import retrofit2.http.Path
 
 interface StudentApi {
+
     @GET("students")
-    suspend fun  getStudents(): List<StudentDto>
+    suspend fun getStudents(): List<StudentDto>
+
     @POST("students")
-    suspend fun createStudent(@Body student: StudentCreateRequest): StudentDto
+    suspend fun createStudent(@Body student: StudentRequest): StudentDto
+
     @PUT("students/{id}")
-    suspend fun updateStudent(
-        @Path("id") id: Int,
-        @Body student: StudentCreateRequest
-    ): StudentDto
+    suspend fun updateStudent(@Path("id") id: Int, @Body student: StudentRequest): StudentDto
+
     @DELETE("students/{id}")
-    suspend fun deleteStudent(@Path("id")id : Int)
+    suspend fun deleteStudent(@Path("id") id: Int)
 }

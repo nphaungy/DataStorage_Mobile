@@ -1,5 +1,5 @@
 package com.example.studentmanagementapp.ui
-import androidx.compose.runtime.LaunchedEffect
+
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -8,6 +8,7 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material3.AlertDialog
@@ -20,6 +21,8 @@ import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -30,7 +33,8 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
-import com.example.studentmanagementapp.model.Student
+import com.example.studentmanagementapp.data.local.StudentEntity
+import com.example.studentmanagementapp.data.local.SyncStatus
 import com.example.studentmanagementapp.viewmodel.StudentViewModel
 
 @Composable
@@ -39,13 +43,14 @@ fun StudentScreen(
     onLogout: () -> Unit = {},
     viewModel: StudentViewModel = viewModel(factory = StudentViewModel.Factory)
 ) {
-    // ยังไม่เคยกดโหลด
-    var hasLoaded by rememberSaveable { mutableStateOf(false) }
-    // เรียก Protected API
-    LaunchedEffect(Unit) {
-        hasLoaded = true
-        viewModel.loadStudents()
-    }
+    val students by viewModel.students.collectAsState()
+    val visibleStudents by viewModel.filteredStudents.collectAsState()
+    val pendingCount = students.count { it.syncStatus == SyncStatus.PENDING }
+    val failedCount = students.count { it.syncStatus == SyncStatus.FAILED }
+
+    // Server ล่มก็ยังแสดงข้อมูลจาก Room
+    LaunchedEffect(Unit) { viewModel.loadStudents() }
+
     LazyColumn(
         modifier = modifier
             .fillMaxSize()
@@ -64,41 +69,57 @@ fun StudentScreen(
                     text = "Student Management",
                     style = MaterialTheme.typography.headlineSmall
                 )
-                TextButton(onClick = onLogout) {
-                    Text("Logout")
+                TextButton(onClick = onLogout) { Text("Logout") }
+            }
+        }
+
+        viewModel.isOnline?.let { online ->
+            item { OnlineStatus(isOnline = online) }
+        }
+
+        item {
+            Text(
+                text = "รอ Sync (PENDING): $pendingCount   |   ล้มเหลว (FAILED): $failedCount",
+                style = MaterialTheme.typography.bodyMedium
+            )
+        }
+
+        item {
+            Row(
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Button(
+                    onClick = { viewModel.loadStudents() },
+                    enabled = !viewModel.isSyncing
+                ) { Text("Load Students") }
+
+                Button(
+                    onClick = { viewModel.syncStudents() },
+                    enabled = !viewModel.isSyncing
+                ) { Text("Sync Now") }
+
+                if (viewModel.isSyncing) {
+                    CircularProgressIndicator(
+                        modifier = Modifier.size(24.dp),
+                        strokeWidth = 2.dp
+                    )
                 }
             }
         }
 
-        // Exercise 4: สถานะออนไลน์ / ออฟไลน์
-        if (hasLoaded && !viewModel.isLoading) {
-            item { OnlineStatus(isOnline = viewModel.isOnline) }
-        }
-
-        item {
-            Button(
-                onClick = {
-                    hasLoaded = true
-                    viewModel.loadStudents()
-                },
-                enabled = !viewModel.isLoading
-            ) {
-                Text("Refresh")
-            }
-        }
-
-        viewModel.errorMessage?.let { message ->
+        viewModel.message?.let { m ->
             item {
-                Text(text = message, color = MaterialTheme.colorScheme.error)
+                Text(
+                    text = m.text,
+                    color = if (m.isError) MaterialTheme.colorScheme.error
+                    else MaterialTheme.colorScheme.onSurfaceVariant
+                )
             }
         }
 
-        // Exercise 1: เพิ่มนักศึกษา
-        item {
-            AddStudentForm(onAdd = viewModel::addStudent)
-        }
+        item { AddStudentForm(onAdd = viewModel::addStudent) }
 
-        // Exercise 3: ค้นหา
         item {
             OutlinedTextField(
                 value = viewModel.searchQuery,
@@ -109,38 +130,26 @@ fun StudentScreen(
             )
         }
 
-        if (viewModel.isLoading) {
+        if (visibleStudents.isEmpty() && viewModel.searchQuery.isNotBlank()) {
             item {
-                Box(
-                    modifier = Modifier.fillMaxWidth(),
-                    contentAlignment = Alignment.Center
-                ) {
-                    CircularProgressIndicator()
-                }
-            }
-        } else {
-            val list = viewModel.filteredStudents
-            if (list.isEmpty() && viewModel.searchQuery.isNotBlank()) {
-                item {
-                    Text(
-                        text = "ไม่พบนักศึกษาที่ตรงกับ \"${viewModel.searchQuery}\"",
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                }
-            }
-            items(list, key = { it.id }) { student ->
-                StudentRow(
-                    student = student,
-                    onClick = { viewModel.selectStudent(student) },
-                    onDelete = { viewModel.deleteStudent(student) }
+                Text(
+                    text = "ไม่พบนักศึกษาที่ตรงกับ \"${viewModel.searchQuery}\"",
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
             }
+        }
+
+        items(visibleStudents, key = { it.localId }) { student ->
+            StudentRow(
+                student = student,
+                onClick = { viewModel.selectStudent(student) },
+                onDelete = { viewModel.deleteStudent(student) }
+            )
         }
 
         item { Box(modifier = Modifier.padding(bottom = 16.dp)) }
     }
 
-    // Bonus: แก้ไขนักศึกษาที่เลือก
     viewModel.selectedStudent?.let { selected ->
         EditStudentDialog(
             student = selected,
@@ -154,8 +163,8 @@ fun StudentScreen(
 private fun OnlineStatus(isOnline: Boolean) {
     val color = if (isOnline) Color(0xFF2E7D32) else MaterialTheme.colorScheme.error
     Text(
-        text = if (isOnline) "● ออนไลน์: ข้อมูลล่าสุดจาก Server"
-        else "● ออฟไลน์: แสดงข้อมูลที่บันทึกไว้ในเครื่อง",
+        text = if (isOnline) "● ออนไลน์: เชื่อมต่อ Server ได้"
+        else "● ออฟไลน์: Server ไม่พร้อม แสดงข้อมูลจากเครื่อง",
         color = color,
         style = MaterialTheme.typography.bodyMedium
     )
@@ -207,10 +216,16 @@ private fun AddStudentForm(onAdd: (code: String, name: String, major: String) ->
 
 @Composable
 private fun StudentRow(
-    student: Student,
+    student: StudentEntity,
     onClick: () -> Unit,
     onDelete: () -> Unit
 ) {
+    val statusColor = when (student.syncStatus) {
+        SyncStatus.SYNCED -> Color(0xFF2E7D32)
+        SyncStatus.PENDING -> Color(0xFFEF6C00)
+        else -> MaterialTheme.colorScheme.error
+    }
+
     Card(
         modifier = Modifier
             .fillMaxWidth()
@@ -226,8 +241,12 @@ private fun StudentRow(
                     style = MaterialTheme.typography.titleMedium
                 )
                 Text(text = student.major, style = MaterialTheme.typography.bodyMedium)
+                Text(
+                    text = "Sync: ${student.syncStatus}",
+                    color = statusColor,
+                    style = MaterialTheme.typography.bodySmall
+                )
             }
-            // Exercise 2: ลบ
             TextButton(
                 onClick = onDelete,
                 colors = ButtonDefaults.textButtonColors(
@@ -242,14 +261,13 @@ private fun StudentRow(
 
 @Composable
 private fun EditStudentDialog(
-    student: Student,
-    onSave: (Student) -> Unit,
+    student: StudentEntity,
+    onSave: (StudentEntity) -> Unit,
     onDismiss: () -> Unit
 ) {
-    // ผูก state กับ id: เลือกคนใหม่ = ค่าเริ่มต้นใหม่
-    var code by remember(student.id) { mutableStateOf(student.studentCode) }
-    var name by remember(student.id) { mutableStateOf(student.name) }
-    var major by remember(student.id) { mutableStateOf(student.major) }
+    var code by remember(student.localId) { mutableStateOf(student.studentCode) }
+    var name by remember(student.localId) { mutableStateOf(student.name) }
+    var major by remember(student.localId) { mutableStateOf(student.major) }
 
     val edited = student.copy(studentCode = code.trim(), name = name.trim(), major = major.trim())
     val canSave = code.isNotBlank() && name.isNotBlank() && major.isNotBlank() && edited != student
